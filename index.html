@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>籃球戰術板 - 橫向優化版</title>
+    <style>
+        :root {
+            --tool-bg: rgba(30, 30, 30, 0.9);
+            --active-color: #ff4757;
+            --player-size: 60px;
+            --ball-size: 55px;
+        }
+
+        /* 1. 消除空白：確保 body 撐滿且背景不溢出 */
+        body, html {
+            margin: 0; padding: 0;
+            width: 100vw; height: 100vh;
+            overflow: hidden;
+            background-color: #000;
+            font-family: sans-serif;
+            position: fixed; /* 防止手機瀏覽器橡皮筋回彈 */
+        }
+
+        /* 確保球場填滿整個螢幕，消除兩側空白 */
+        #court-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-image: url('https://duk.tw/IVkZzH.png');
+            background-size: cover; /* 關鍵：強制填滿螢幕，不留白 */
+            background-position: center center;
+            background-repeat: no-repeat;
+            touch-action: none;
+        }
+
+        #drawing-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            z-index: 5;
+        }
+
+        /* 工具欄 */
+        #toolbar {
+            position: absolute;
+            right: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 100;
+            background: var(--tool-bg);
+            padding: 10px;
+            border-radius: 25px;
+        }
+
+        .tool-btn {
+            width: 45px; height: 45px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.3);
+            background: #333;
+            color: white;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+        }
+
+        .tool-btn.active {
+            background: var(--active-color);
+            border-color: #fff;
+        }
+
+        /* 球員與球 */
+        .node-style {
+            position: absolute;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            overflow: hidden;
+            background: #fff;
+            z-index: 50;
+            touch-action: none;
+            /* 讓旋轉中心在圓心 */
+            transform-origin: center center;
+        }
+
+        .node-style img {
+            width: 100%; height: 100%;
+            object-fit: cover;
+            display: block;
+            pointer-events: none;
+            /* 圖片旋轉動畫平滑感 */
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .player-node { width: var(--player-size); height: var(--player-size); }
+        .ball-node { width: var(--ball-size); height: var(--ball-size); border-color: #ffa500; }
+
+    </style>
+</head>
+<body>
+
+<div id="court-container">
+    <canvas id="drawing-canvas"></canvas>
+    
+    <div id="toolbar">
+        <button class="tool-btn active" id="btn-move" onclick="setMode('move')">移動</button>
+        <button class="tool-btn" id="btn-line" onclick="setMode('line')">實線</button>
+        <button class="tool-btn" id="btn-dash" onclick="setMode('dash')">虛線</button>
+        <button class="tool-btn" id="btn-eraser" onclick="setMode('eraser')">橡皮</button>
+        <button class="tool-btn" style="background:#555" onclick="clearCanvas()">清除</button>
+    </div>
+
+    <div class="node-style ball-node" style="top: 50%; left: 50%; transform: translate(-50%, -50%);">
+        <img src="https://duk.tw/FnY3VY.png" alt="ball">
+    </div>
+</div>
+
+<script>
+    const players = [
+        { name: "小羊", url: "https://duk.tw/tj5R5R.jpg" }, { name: "十元", url: "https://duk.tw/1zgKm4.jpg" },
+        { name: "小薇", url: "https://duk.tw/C73w9n.jpg" }, { name: "小蓁", url: "https://duk.tw/Xu161w.jpg" },
+        { name: "一斤", url: "https://duk.tw/UJ6pu3.jpg" }, { name: "小牛", url: "https://duk.tw/jxg8WD.jpg" },
+        { name: "怡叡", url: "https://duk.tw/SoMgNv.jpg" }, { name: "小玟", url: "https://duk.tw/et7I8E.jpg" },
+        { name: "小瑀", url: "https://duk.tw/tCwR98.jpg" }, { name: "小竹", url: "https://duk.tw/ogm7CX.jpg" },
+        { name: "郭", url: "https://duk.tw/1jLutv.jpg" }, { name: "小棋", url: "https://duk.tw/d5KEjp.jpg" }
+    ];
+
+    const container = document.getElementById('court-container');
+    const canvas = document.getElementById('drawing-canvas');
+    const ctx = canvas.getContext('2d');
+    
+    let mode = 'move'; 
+    let isDrawing = false;
+    let lastX = 0, lastY = 0;
+
+    function initPlayers() {
+        players.forEach((p, index) => {
+            const div = document.createElement('div');
+            div.className = 'node-style player-node';
+            // 初始靠左排列，避開工具欄
+            div.style.left = index < 6 ? '20px' : '90px';
+            div.style.top = `${(index % 6) * 75 + 20}px`;
+            
+            const img = document.createElement('img');
+            img.src = p.url;
+            div.appendChild(img);
+            container.appendChild(div);
+            makeDraggable(div);
+        });
+        makeDraggable(document.querySelector('.ball-node'));
+    }
+
+    function makeDraggable(el) {
+        let offsetX, offsetY;
+        el.onpointerdown = function(e) {
+            if (mode !== 'move') return;
+            e.stopPropagation();
+            const rect = el.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+            el.setPointerCapture(e.pointerId);
+            
+            el.onpointermove = function(ev) {
+                el.style.left = (ev.clientX - offsetX) + 'px';
+                el.style.top = (ev.clientY - offsetY) + 'px';
+            };
+            el.onpointerup = function(ev) {
+                el.onpointermove = null;
+                el.onpointerup = null;
+                el.releasePointerCapture(ev.pointerId);
+            };
+        };
+    }
+
+    function setMode(newMode) {
+        mode = newMode;
+        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(`btn-${newMode}`)?.classList.add('active');
+        canvas.style.zIndex = (mode === 'move') ? "5" : "60";
+    }
+
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+
+    // 繪圖逻辑
+    canvas.onpointerdown = (e) => {
+        if (mode === 'move') return;
+        isDrawing = true;
+        [lastX, lastY] = [e.clientX, e.clientY];
+    };
+
+    canvas.onpointermove = (e) => {
+        if (!isDrawing) return;
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        ctx.lineTo(e.clientX, e.clientY);
+        
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        if (mode === 'line') {
+            ctx.strokeStyle = '#000000'; // 實線黑色
+            ctx.setLineDash([]);
+        } else if (mode === 'dash') {
+            ctx.strokeStyle = '#FF0000'; // 虛線紅色
+            ctx.setLineDash([10, 10]);
+        } else if (mode === 'eraser') {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.lineWidth = 30;
+        }
+        
+        ctx.stroke();
+        ctx.globalCompositeOperation = 'source-over';
+        [lastX, lastY] = [e.clientX, e.clientY];
+    };
+
+    canvas.onpointerup = () => isDrawing = false;
+
+    function clearCanvas() {
+        if(confirm('確定要清除所有繪圖嗎？')) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            setMode('move'); 
+        }
+    }
+
+    // 旋轉核心邏輯：修正照片方向，不旋轉背景
+    function updateRotation() {
+        // 使用 window.orientation (舊) 或 screen.orientation.angle (新)
+        let angle = 0;
+        if (window.screen && window.screen.orientation) {
+            angle = window.screen.orientation.angle;
+        } else {
+            angle = window.orientation || 0;
+        }
+
+        // 我們只旋轉圖片元素，讓照片看起來永遠是正的
+        const imgs = document.querySelectorAll('.node-style img');
+        imgs.forEach(img => {
+            img.style.transform = `rotate(${-angle}deg)`;
+        });
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('orientationchange', () => {
+        // 延遲執行確保瀏覽器已完成轉向計算
+        setTimeout(() => {
+            resizeCanvas();
+            updateRotation();
+        }, 300);
+    });
+
+    // 監控裝置旋轉 (針對現代手機)
+    if (window.screen && window.screen.orientation) {
+        window.screen.orientation.addEventListener('change', updateRotation);
+    }
+
+    initPlayers();
+    resizeCanvas();
+    updateRotation();
+    setMode('move');
+</script>
+
+</body>
+</html>
